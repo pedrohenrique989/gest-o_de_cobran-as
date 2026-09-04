@@ -1,0 +1,20 @@
+@tailwind base; @tailwind components; @tailwind utilities;
+@layer base { body { @apply bg-canvas text-ink antialiased; } .num { font-variant-numeric: tabular-nums; } }
+@layer components {
+  .panel { @apply rounded-lg border border-line bg-white shadow-panel; }
+  .panel-head { @apply flex items-center justify-between border-b border-line px-4 py-2.5; }
+  .panel-title { @apply text-[13px] font-semibold; }
+  .tbl { @apply w-full border-collapse text-[12.5px]; }
+  .tbl thead th { @apply sticky top-0 z-10 bg-canvas px-2.5 py-2 text-left text-[11px] font-semibold text-ink-muted border-b border-line whitespace-nowrap; }
+  .tbl tbody td { @apply px-2.5 py-1.5 border-b border-line/70 align-middle whitespace-nowrap; }
+  .tbl tbody tr:nth-child(even) { @apply bg-canvas/50; }
+  .tbl tbody tr:hover { @apply bg-action-soft/50; }
+  .tbl tbody tr.clicavel { @apply cursor-pointer; }
+  .tbl .num { @apply text-right; }
+  .tbl .fix { @apply sticky left-0 bg-white z-[5]; }
+  .field { @apply h-8 w-full rounded border border-line bg-white px-2 text-[13px] outline-none focus:border-action focus:ring-1 focus:ring-action/30 disabled:bg-canvas disabled:text-ink-faint; }
+  .lbl { @apply block text-[11px] font-medium text-ink-muted; }
+  .badge { @apply inline-flex max-w-full items-center truncate rounded border px-1.5 py-px text-[11px] font-medium leading-4; }
+  .b-neutral { @apply bg-canvas text-ink-muted border-line; } .b-green { @apply bg-ok-soft text-ok border-ok/20; }
+  .b-blue { @apply bg-info-soft text-info border-info/20; } .b-red { @apply bg-danger-soft text-danger border-danger/20; } .b-orange { @apply bg-warn-soft text-warn border-warn/20; }
+}

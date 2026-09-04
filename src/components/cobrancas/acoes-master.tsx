@@ -1,0 +1,137 @@
+"use client";
+import { useState, useTransition } from "react";
+import { Modal } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
+import { Erro, Pendente } from "@/components/ui/basicos";
+import { fmtBRL, parseBRL } from "@/lib/format";
+import { alterarFase, alterarSituacao, criarRecebivel, editarProjeto, excluirDaGestao, registrarRecebimento, restaurarProjeto, salvarFinanceiro, type Resultado } from "@/services/receivablesActions";
+import { ORIGIN_LABEL, type CollectionStatus, type Receivable } from "@/types/domain";
+
+type Acao = "cadastro" | "fase" | "situacao" | "valores" | "recebimento" | "parcela" | "excluir" | "restaurar" | null;
+const ORIGENS = Object.entries(ORIGIN_LABEL) as [Receivable["origin"], string][];
+
+export const AcoesMaster = ({ r, etapas, onFeito }: { r: Receivable; etapas: CollectionStatus[]; onFeito: () => void }) => {
+  const [acao, setAcao] = useState<Acao>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const exec = (fn: () => Promise<Resultado<unknown>>) => start(async () => { const res = await fn(); if (!res.ok) { setErro(res.erro); return; } setErro(null); setAcao(null); onFeito(); });
+  const fechar = () => { setAcao(null); setErro(null); };
+  const arquivado = !r.project_active;
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-[12px] font-semibold uppercase tracking-wide text-ink-muted">Ações do Master Admin</h3>
+      <div className="flex flex-wrap gap-1.5">
+        {!arquivado && <>
+          <Button size="sm" variant="outline" onClick={() => setAcao("cadastro")}>Editar cadastro</Button>
+          <Button size="sm" variant="outline" onClick={() => setAcao("fase")}>Alterar Fase</Button>
+          <Button size="sm" variant="outline" onClick={() => setAcao("situacao")}>Alterar Situação</Button>
+          <Button size="sm" variant="outline" onClick={() => setAcao("valores")}>Editar valores</Button>
+          <Button size="sm" variant="outline" onClick={() => setAcao("recebimento")}>Registrar recebimento</Button>
+          <Button size="sm" variant="outline" onClick={() => setAcao("parcela")}>Criar nova parcela</Button>
+          <Button size="sm" variant="danger" onClick={() => setAcao("excluir")}>Excluir da gestão</Button>
+        </>}
+        {arquivado && <Button size="sm" onClick={() => setAcao("restaurar")}>Restaurar</Button>}
+        <span title="Disponível após a importação da base financeira (FASE 3)"><Button size="sm" variant="ghost" disabled>Vincular a registro oficial</Button></span>
+        <span title="Sincronização com Google Sheets: configuração pendente (FASE 3)"><Button size="sm" variant="ghost" disabled>Tentar sincronização novamente</Button></span>
+      </div>
+      <p className="text-[11px] text-ink-faint">Vincular e sincronizar: <Pendente /></p>
+
+      <Modal aberto={acao === "cadastro"} titulo="Editar cadastro do projeto" onFechar={fechar}><FormCadastro r={r} erro={erro} pending={pending} onSalvar={(d) => exec(() => editarProjeto(r.project_id, d))} /></Modal>
+      <Modal aberto={acao === "fase"} titulo="Alterar Fase do projeto" onFechar={fechar} largura="max-w-md"><FormFase atual={r.stage_code} erro={erro} pending={pending} onSalvar={(f, j) => exec(() => alterarFase(r.project_id, f, j))} /></Modal>
+      <Modal aberto={acao === "situacao"} titulo="Alterar Situação do projeto" onFechar={fechar} largura="max-w-md"><FormSituacao r={r} erro={erro} pending={pending} onSalvar={(s, j, f) => exec(() => alterarSituacao(r.project_id, s, j, f))} /></Modal>
+      <Modal aberto={acao === "valores"} titulo="Editar valores" onFechar={fechar}><FormValores r={r} erro={erro} pending={pending} onSalvar={(d) => exec(() => salvarFinanceiro({ id: r.id, ...d }))} /></Modal>
+      <Modal aberto={acao === "recebimento"} titulo="Registrar recebimento" onFechar={fechar}><FormRecebimento r={r} erro={erro} pending={pending} onSalvar={(d) => exec(() => registrarRecebimento({ id: r.id, ...d }))} /></Modal>
+      <Modal aberto={acao === "parcela"} titulo="Nova parcela / recebível" onFechar={fechar}><FormParcela r={r} etapas={etapas} erro={erro} pending={pending} onSalvar={(d) => exec(() => criarRecebivel({ project_id: r.project_id, ...d }))} /></Modal>
+      <Modal aberto={acao === "excluir"} titulo="Excluir da gestão" onFechar={fechar} largura="max-w-md"><FormMotivo texto={`O projeto "${r.project_name}" e todos os seus recebíveis deixarão de aparecer em dashboards, totais, cobranças e filtros. O histórico é preservado e o projeto pode ser restaurado.`} rotulo="Confirmar exclusão" erro={erro} pending={pending} onSalvar={(m) => exec(() => excluirDaGestao(r.project_id, m))} danger /></Modal>
+      <Modal aberto={acao === "restaurar"} titulo="Restaurar projeto" onFechar={fechar} largura="max-w-md"><p className="text-[13px]">Restaurar &quot;{r.project_name}&quot; e seus recebíveis para a operação ativa?</p><Erro msg={erro} /><div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={fechar}>Cancelar</Button><Button disabled={pending} onClick={() => exec(() => restaurarProjeto(r.project_id))}>Restaurar</Button></div></Modal>
+    </section>
+  );
+};
+
+const Rodape = ({ erro, pending, onSalvar, rotulo = "Salvar", danger }: { erro: string | null; pending: boolean; onSalvar: () => void; rotulo?: string; danger?: boolean }) => (<><Erro msg={erro} /><div className="mt-4 flex justify-end"><Button variant={danger ? "danger" : "primary"} disabled={pending} onClick={onSalvar}>{pending ? "Salvando…" : rotulo}</Button></div></>);
+const L = ({ t, children, c }: { t: string; children: React.ReactNode; c?: string }) => <label className={`lbl ${c ?? ""}`}>{t}{children}</label>;
+
+function FormCadastro({ r, erro, pending, onSalvar }: { r: Receivable; erro: string | null; pending: boolean; onSalvar: (d: { name: string; hub: "IFES" | "GOV"; ministry_government: string | null; institute: string | null; foundation: string | null; origin: Receivable["origin"]; provisional: boolean; notes: string | null }) => void }) {
+  const [f, setF] = useState({ name: r.project_name, hub: r.hub, ministry_government: r.ministry_government ?? "", institute: r.institute ?? "", foundation: r.foundation ?? "", origin: r.project_origin, provisional: r.project_provisional, notes: "" });
+  const up = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value }));
+  return (<div className="grid grid-cols-2 gap-3">
+    <L t="Projeto" c="col-span-2"><input className="field mt-0.5" value={f.name} onChange={up("name")} /></L>
+    <L t="HUB"><select className="field mt-0.5" value={f.hub} onChange={up("hub")}><option>IFES</option><option>GOV</option></select></L>
+    <L t="Ministério / Governo"><input className="field mt-0.5" value={f.ministry_government} onChange={up("ministry_government")} /></L>
+    <L t="Instituto"><input className="field mt-0.5" value={f.institute} onChange={up("institute")} /></L>
+    <L t="Fundação"><input className="field mt-0.5" value={f.foundation} onChange={up("foundation")} /></L>
+    <L t="Origem"><select className="field mt-0.5" value={f.origin} onChange={up("origin")}>{ORIGENS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></L>
+    <label className="flex items-center gap-2 self-end pb-2 text-[12px]"><input type="checkbox" checked={f.provisional} onChange={up("provisional")} />Provisório (CRM / pré-base)</label>
+    <L t="Observação" c="col-span-2"><textarea className="field mt-0.5 h-14 py-1.5" value={f.notes} onChange={up("notes")} /></L>
+    <div className="col-span-2"><Rodape erro={erro} pending={pending} onSalvar={() => onSalvar({ ...f, ministry_government: f.ministry_government || null, institute: f.institute || null, foundation: f.foundation || null, notes: f.notes || null })} /></div>
+  </div>);
+}
+function FormFase({ atual, erro, pending, onSalvar }: { atual: string | null; erro: string | null; pending: boolean; onSalvar: (f: string, j: string | null) => void }) {
+  const [f, setF] = useState(atual ?? "A"); const [j, setJ] = useState("");
+  return (<div className="space-y-3"><p className="text-[12px] text-ink-muted">Fase atual: <b>{atual ?? "Pendente"}</b>. Não há exigência de progressão linear; a alteração é auditada.</p>
+    <L t="Nova fase"><select className="field mt-0.5" value={f} onChange={(e) => setF(e.target.value)}>{["A", "B", "C", "D"].map((x) => <option key={x}>{x}</option>)}</select></L>
+    <L t="Justificativa (opcional)"><textarea className="field mt-0.5 h-14 py-1.5" value={j} onChange={(e) => setJ(e.target.value)} /></L>
+    <Rodape erro={erro} pending={pending} onSalvar={() => onSalvar(f, j || null)} /></div>);
+}
+function FormSituacao({ r, erro, pending, onSalvar }: { r: Receivable; erro: string | null; pending: boolean; onSalvar: (s: "active" | "backlog" | "lost", j: string | null, f: string | null) => void }) {
+  const [s, setS] = useState<"active" | "backlog" | "lost">(r.project_status === "archived" ? "active" : r.project_status); const [j, setJ] = useState(""); const [f, setF] = useState(r.stage_code ?? "");
+  const reativandoPerdido = r.project_status === "lost" && s === "active";
+  return (<div className="space-y-3">
+    <L t="Situação"><select className="field mt-0.5" value={s} onChange={(e) => setS(e.target.value as typeof s)}><option value="active">Ativo</option><option value="backlog">Backlog</option><option value="lost">Perdido</option></select></L>
+    {reativandoPerdido && <L t="Confirmar fase (obrigatório ao reativar um perdido)"><select className="field mt-0.5" value={f} onChange={(e) => setF(e.target.value)}><option value="">—</option>{["A", "B", "C", "D"].map((x) => <option key={x}>{x}</option>)}</select></L>}
+    <L t={reativandoPerdido ? "Justificativa (obrigatória)" : "Justificativa"}><textarea className="field mt-0.5 h-14 py-1.5" value={j} onChange={(e) => setJ(e.target.value)} /></L>
+    <p className="text-[11px] text-ink-faint">A fase é preservada; Backlog e Perdido saem dos totais ativos, mas continuam consultáveis.</p>
+    <Rodape erro={erro} pending={pending} onSalvar={() => onSalvar(s, j || null, f || null)} /></div>);
+}
+const Num = ({ t, v, set }: { t: string; v: string; set: (s: string) => void }) => <L t={t}><input className="field num mt-0.5 text-right" value={v} onChange={(e) => set(e.target.value)} /></L>;
+function FormValores({ r, erro, pending, onSalvar }: { r: Receivable; erro: string | null; pending: boolean; onSalvar: (d: { planned_project: number; planned_innovatis: number; received_project: number; received_innovatis: number; competence: string; flag: string | null; origin: Receivable["origin"]; provisional: boolean; legacy_consolidated: boolean; justification: string | null }) => void }) {
+  const s = (n: number | string) => Number(n).toFixed(2).replace(".", ",");
+  const [f, setF] = useState({ pp: s(r.planned_project), pi: s(r.planned_innovatis), rp: s(r.received_project), ri: s(r.received_innovatis), competence: r.competence, flag: r.flag ?? "", origin: r.origin, provisional: r.provisional, legacy_consolidated: r.legacy_consolidated, justification: "" });
+  const up = <K extends keyof typeof f>(k: K) => (v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
+  return (<div className="grid grid-cols-2 gap-3">
+    <Num t="Previsto Projeto" v={f.pp} set={up("pp")} /><Num t="Previsto Innovatis" v={f.pi} set={up("pi")} />
+    <Num t="Recebido Projeto" v={f.rp} set={up("rp")} /><Num t="Recebido Innovatis" v={f.ri} set={up("ri")} />
+    <L t="Competência (1º dia do mês)"><input type="date" className="field mt-0.5" value={f.competence} onChange={(e) => up("competence")(e.target.value)} /></L>
+    <L t="FLAG"><input className="field mt-0.5" value={f.flag} onChange={(e) => up("flag")(e.target.value)} /></L>
+    <L t="Origem"><select className="field mt-0.5" value={f.origin} onChange={(e) => up("origin")(e.target.value as Receivable["origin"])}>{ORIGENS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></L>
+    <div className="flex flex-col gap-1 self-end pb-1 text-[12px]"><label className="flex items-center gap-2"><input type="checkbox" checked={f.provisional} onChange={(e) => up("provisional")(e.target.checked)} />Provisório</label><label className="flex items-center gap-2"><input type="checkbox" checked={f.legacy_consolidated} onChange={(e) => up("legacy_consolidated")(e.target.checked)} />Consolidado (vencidos até jun/2026)</label></div>
+    <L t="Justificativa" c="col-span-2"><textarea className="field mt-0.5 h-14 py-1.5" value={f.justification} onChange={(e) => up("justification")(e.target.value)} /></L>
+    <div className="col-span-2"><Rodape erro={erro} pending={pending} onSalvar={() => onSalvar({ planned_project: parseBRL(f.pp), planned_innovatis: parseBRL(f.pi), received_project: parseBRL(f.rp), received_innovatis: parseBRL(f.ri), competence: f.competence.slice(0, 8) + "01", flag: f.flag || null, origin: f.origin, provisional: f.provisional, legacy_consolidated: f.legacy_consolidated, justification: f.justification || null })} /></div>
+  </div>);
+}
+function FormRecebimento({ r, erro, pending, onSalvar }: { r: Receivable; erro: string | null; pending: boolean; onSalvar: (d: { received_project: number; received_innovatis: number; received_date: string | null; invoice_number: string | null; note: string | null; justification: string | null }) => void }) {
+  const [f, setF] = useState({ rp: Number(r.received_project).toFixed(2).replace(".", ","), ri: Number(r.received_innovatis).toFixed(2).replace(".", ","), data: "", nf: "", note: "", just: "", confirmar: false });
+  const rp = parseBRL(f.rp), ri = parseBRL(f.ri);
+  const excede = rp > Number(r.planned_project) + 0.01 || ri > Number(r.planned_innovatis) + 0.01;
+  const saldoAntes = Number(r.balance_project) + Number(r.balance_innovatis);
+  const saldoDepois = Math.max(Number(r.planned_project) - rp, 0) + Math.max(Number(r.planned_innovatis) - ri, 0);
+  const up = <K extends keyof typeof f>(k: K) => (v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
+  return (<div className="space-y-3">
+    <p className="text-[12px] text-ink-muted">Informe o valor <b>acumulado</b> recebido em cada perspectiva.</p>
+    <div className="grid grid-cols-2 gap-3"><Num t={`Recebido Projeto (previsto ${fmtBRL(r.planned_project)})`} v={f.rp} set={up("rp")} /><Num t={`Recebido Innovatis (previsto ${fmtBRL(r.planned_innovatis)})`} v={f.ri} set={up("ri")} />
+      <L t="Data do recebimento"><input type="date" className="field mt-0.5" value={f.data} onChange={(e) => up("data")(e.target.value)} /></L><L t="NF"><input className="field mt-0.5" value={f.nf} onChange={(e) => up("nf")(e.target.value)} /></L></div>
+    <div className="grid grid-cols-3 gap-2 rounded border border-line bg-canvas p-2 text-[12px]"><div>Saldo antes<div className="num font-semibold">{fmtBRL(saldoAntes)}</div></div><div>Valor recebido (total)<div className="num font-semibold text-ok">{fmtBRL(rp + ri)}</div></div><div>Saldo depois<div className="num font-semibold">{fmtBRL(saldoDepois)}</div></div></div>
+    {excede && <div className="rounded border border-warn/40 bg-warn-soft p-2 text-[12px] text-warn"><b>Atenção:</b> o recebido supera o previsto. O saldo não fica negativo; a inconsistência será sinalizada. Para continuar, justifique e confirme.<label className="mt-1 flex items-center gap-2"><input type="checkbox" checked={f.confirmar} onChange={(e) => up("confirmar")(e.target.checked)} />Confirmo que o valor está correto</label></div>}
+    <L t="Observação"><input className="field mt-0.5" value={f.note} onChange={(e) => up("note")(e.target.value)} /></L>
+    <L t={excede ? "Justificativa (obrigatória)" : "Justificativa (se correção)"}><textarea className="field mt-0.5 h-14 py-1.5" value={f.just} onChange={(e) => up("just")(e.target.value)} /></L>
+    <Rodape erro={erro} pending={pending || (excede && !f.confirmar)} rotulo="Registrar" onSalvar={() => onSalvar({ received_project: rp, received_innovatis: ri, received_date: f.data || null, invoice_number: f.nf || null, note: f.note || null, justification: f.just || null })} /></div>);
+}
+function FormParcela({ r, etapas, erro, pending, onSalvar }: { r: Receivable; etapas: CollectionStatus[]; erro: string | null; pending: boolean; onSalvar: (d: Omit<Parameters<typeof criarRecebivel>[0], "project_id">) => void }) {
+  const [f, setF] = useState({ competence: "", pp: "", pi: "", rp: "0", ri: "0", etapa: "", reason: "", action: "", deadline: "", flag: "", origin: "platform" as Receivable["origin"], provisional: r.project_provisional });
+  const up = <K extends keyof typeof f>(k: K) => (v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
+  return (<div className="grid grid-cols-2 gap-3">
+    <p className="col-span-2 text-[12px] text-ink-muted">Projeto: <b>{r.project_name}</b></p>
+    <L t="Competência"><input type="month" className="field mt-0.5" value={f.competence} onChange={(e) => up("competence")(e.target.value)} /></L><L t="Etapa da cobrança"><select className="field mt-0.5" value={f.etapa} onChange={(e) => up("etapa")(e.target.value)}><option value="">—</option>{etapas.filter((e) => e.hub === r.hub).map((e) => <option key={e.id} value={e.id}>{e.display_label}</option>)}</select></L>
+    <Num t="Previsto Projeto" v={f.pp} set={up("pp")} /><Num t="Previsto Innovatis" v={f.pi} set={up("pi")} /><Num t="Recebido Projeto" v={f.rp} set={up("rp")} /><Num t="Recebido Innovatis" v={f.ri} set={up("ri")} />
+    <L t="Motivo"><input className="field mt-0.5" value={f.reason} onChange={(e) => up("reason")(e.target.value)} /></L><L t="Ação"><input className="field mt-0.5" value={f.action} onChange={(e) => up("action")(e.target.value)} /></L>
+    <L t="Prazo"><input type="date" className="field mt-0.5" value={f.deadline} onChange={(e) => up("deadline")(e.target.value)} /></L><L t="FLAG"><input className="field mt-0.5" value={f.flag} onChange={(e) => up("flag")(e.target.value)} /></L>
+    <L t="Origem"><select className="field mt-0.5" value={f.origin} onChange={(e) => up("origin")(e.target.value as Receivable["origin"])}>{ORIGENS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></L>
+    <label className="flex items-center gap-2 self-end pb-2 text-[12px]"><input type="checkbox" checked={f.provisional} onChange={(e) => up("provisional")(e.target.checked)} />Provisório</label>
+    <div className="col-span-2"><Rodape erro={erro} pending={pending} rotulo="Criar" onSalvar={() => onSalvar({ competence: `${f.competence}-01`, planned_project: parseBRL(f.pp), planned_innovatis: parseBRL(f.pi), received_project: parseBRL(f.rp), received_innovatis: parseBRL(f.ri), collection_status_id: f.etapa || null, reason: f.reason || null, action: f.action || null, responsible_user_id: null, responsible_legacy_name: null, operational_deadline: f.deadline || null, flag: f.flag || null, origin: f.origin, provisional: f.provisional })} /></div>
+  </div>);
+}
+function FormMotivo({ texto, rotulo, erro, pending, onSalvar, danger }: { texto: string; rotulo: string; erro: string | null; pending: boolean; onSalvar: (m: string) => void; danger?: boolean }) {
+  const [m, setM] = useState("");
+  return (<div className="space-y-3"><p className="text-[13px]">{texto}</p><L t="Motivo (obrigatório)"><textarea className="field mt-0.5 h-16 py-1.5" value={m} onChange={(e) => setM(e.target.value)} /></L><Rodape erro={erro} pending={pending || !m.trim()} rotulo={rotulo} danger={danger} onSalvar={() => onSalvar(m)} /></div>);
+}
